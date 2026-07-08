@@ -24,12 +24,46 @@ except Exception:
 
 import requests
 
-# ---------- 配置(单一来源;全部可用环境变量覆盖)----------
+# ---------- .env 兜底加载(环境变量优先;仅本进程内存读取,绝不写盘/打印)----------
+# .env 兜底位置:本 skill 目录、当前工作目录。所有配置(含 GEMINI_VERTEX_PROJECT)都可写进 .env,
+# 不必非得设成 shell 环境变量 -- 与 .env.example 的承诺保持一致。
+_ENV_FILES = (Path(__file__).resolve().parent.parent / ".env", Path.cwd() / ".env")
+
+
+def _parse_env_files():
+    """把 .env 兜底位置解析成 dict(先出现的文件优先)。绝不写盘、绝不打印值。"""
+    data = {}
+    for env in _ENV_FILES:
+        try:
+            if env.is_file():
+                for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    s = line.strip()
+                    if not s or s.startswith("#") or "=" not in s:
+                        continue
+                    k, v = s.split("=", 1)
+                    data.setdefault(k.strip(), v.strip().strip("\"'"))
+        except Exception:
+            pass
+    return data
+
+
+_DOTENV = _parse_env_files()
+
+
+def _cfg(name, default=None):
+    """读配置:环境变量优先,其次 .env 兜底,再默认。(API key 不走这里,见 load_key。)"""
+    v = os.environ.get(name)
+    if v is None or v == "":
+        v = _DOTENV.get(name)
+    return v if (v is not None and v != "") else default
+
+
+# ---------- 配置(单一来源;环境变量优先,其次 .env,再默认)----------
 # 仅 Vertex Express key(AQ. 前缀)需要项目/区域;AI Studio key(AIza 前缀)无需,留空即可。
-VERTEX_PROJECT = os.environ.get("GEMINI_VERTEX_PROJECT")              # GCP 项目 ID(仅 Vertex Express key 需要)
-VERTEX_LOCATION = os.environ.get("GEMINI_VERTEX_LOCATION", "global")  # Gemini 3.x 在 Vertex 挂 global,不是 us-central1
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")    # 按你的 key 能用的模型设;env 可覆盖
-INLINE_MAX_MB = float(os.environ.get("GEMINI_INLINE_MAX_MB", "70"))   # inline base64 上限(官方 2026-01 升到 100MB base64,取 70 留余量,超了才压缩)
+VERTEX_PROJECT = _cfg("GEMINI_VERTEX_PROJECT")              # GCP 项目 ID(仅 Vertex Express key 需要;可写进 .env)
+VERTEX_LOCATION = _cfg("GEMINI_VERTEX_LOCATION", "global")  # Gemini 3.x 在 Vertex 挂 global,不是 us-central1
+DEFAULT_MODEL = _cfg("GEMINI_MODEL", "gemini-3.5-flash")    # 按你的 key 能用的模型设;env/.env 可覆盖
+INLINE_MAX_MB = float(_cfg("GEMINI_INLINE_MAX_MB", "70"))   # inline base64 上限(官方 2026-01 升到 100MB base64,取 70 留余量,超了才压缩)
 FLASH_INPUT_PRICE = 1.5    # gemini-3.5-flash 约 $1.5/1M input token
 FLASH_OUTPUT_PRICE = 6.0   # 约 $4-6/1M output token(reverse/understand 输出长,不能按 input 价算,否则系统性低估)
 
@@ -56,26 +90,19 @@ DEFAULT_RUBRIC = [
 
 
 _KEY_NAMES = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
-# 读 key 的 .env 兜底位置(环境变量优先):本 skill 目录、当前工作目录。绝不打印值、绝不写盘。
-_ENV_FILES = (Path(__file__).resolve().parent.parent / ".env", Path.cwd() / ".env")
 
 
 def load_key():
     """读 Gemini API key(AI Studio 的 AIza 或 Vertex Express 的 AQ.):先环境变量
-    GOOGLE_API_KEY / GEMINI_API_KEY,再 skill 目录 / cwd 的 .env。不打印值。"""
+    GOOGLE_API_KEY / GEMINI_API_KEY,再 skill 目录 / cwd 的 .env(_DOTENV 已解析)。不打印值。"""
     for name in _KEY_NAMES:
         v = os.environ.get(name)
         if v:
             return v.strip()
-    for env in _ENV_FILES:
-        if env.is_file():
-            for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
-                s = line.strip()
-                for name in _KEY_NAMES:
-                    if s.startswith(name + "="):
-                        val = s.split("=", 1)[1].strip().strip("\"'")
-                        if val:
-                            return val
+    for name in _KEY_NAMES:
+        v = _DOTENV.get(name)
+        if v:
+            return v.strip()
     return None
 
 
