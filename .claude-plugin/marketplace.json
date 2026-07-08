@@ -1,0 +1,20 @@
+{
+  "name": "sansheng-gemini-video-marketplace",
+  "description": "叁笙's Gemini-powered video perception skill for Claude Code.",
+  "owner": {
+    "name": "叁笙 (sansheng)",
+    "email": "sandypoli@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "sansheng-gemini-video",
+      "description": "Give Claude real eyes for video: hand a whole clip to Gemini's native multimodal model and get back structured JSON.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "叁笙 (sansheng)",
+        "email": "sandypoli@gmail.com"
+      }
+    }
+  ]
+}
