@@ -1,15 +1,6 @@
 ---
 name: sansheng-gemini-video
-description: >
-  Use when a task hinges on UNDERSTANDING WHAT HAPPENS INSIDE a video (画面 + 音频 + 时序):
-  分析视频、看视频、视频画面分析、Gemini 分析视频、看懂视频、录屏分析、录屏质检、
-  判断录屏能不能用、视频素材筛选、批量分析视频、分析下载的视频、分析油管视频、
-  YouTube 视频分析、视频打分、视频评估、这段视频里发生了什么、画面里有什么、
-  视频符不符合要求 -- 本地录屏 / 本地视频文件 / YouTube 在线链接皆可。它把整段视频交给
-  Gemini 原生多模态(画面 + 音频 + 时序一起理解,非抽帧瞎猜)分析,吐回结构化评估 JSON
-  给 Claude 接棒决策。即使用户没明说"用 Gemini",只要需要看懂视频画面内容(而不只是下载
-  或拿字幕),就用本 skill。
-  Do not over-trigger:只下载视频不分析 -> yt-dlp;只要字幕 / 纯文字摘要 -> 用字幕/摘要类工具。
+description: Use when 用户需要理解本地视频、录屏或 YouTube 链接里发生的内容，或要做视频质检、素材筛选；触发词：分析视频、看懂视频、录屏质检、视频里发生了什么。只下载、只要字幕摘要或逆向博主打法时不用此 Skill。
 compatibility: >
   Python 3.10+ + requests(唯一第三方依赖,走裸 REST,不需要 google-genai SDK);ffmpeg 可选
   (大文件自动压缩)。按 key 前缀自动分流两种后端:AI Studio key(AIza 前缀 -> generativelanguage
