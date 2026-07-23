@@ -1,7 +1,7 @@
 {
   "name": "sansheng-gemini-video",
   "description": "Give Claude real eyes for video: hand a whole clip to Gemini's native multimodal model and get back structured JSON.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "叁笙 (sansheng)",
     "email": "sandypoli@gmail.com"
