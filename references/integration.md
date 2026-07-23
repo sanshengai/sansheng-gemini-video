@@ -1,8 +1,9 @@
 # Programmatic use + the `reverse` output contract
 
-This skill is a **perception layer**: give it a video, get back structured JSON. It does
-**not** orchestrate, download, or produce anything. This page is for calling it from your
-own code (a workflow, another skill, a batch job) instead of the CLI.
+This skill is a **perception layer with source resolution**: give it a local file or supported
+video URL and get structured JSON. Public YouTube stays remote; other URLs are downloaded (and,
+for WeChat Channels, decrypted by a configured local service) before Gemini sees the media.
+It still does not edit or publish video.
 
 ---
 
@@ -19,19 +20,26 @@ sys.path.insert(0, str(Path.home() / ".claude" / "skills" / "sansheng-gemini-vid
 from analyze_video import analyze_one
 
 result = analyze_one(
-    source,                 # local absolute path OR a YouTube URL
+    source,                 # local absolute path OR a supported video URL
     intent="reverse",       # understand / screening / reverse
     start=None, end=None,   # trim to a segment to save tokens (do this for long clips)
     fps=None,               # 0.2-0.5 for screen recordings; 1.0 for talking-head
     media_resolution="low", # bump to "high" only to read small on-screen text
     auto_compress=True,     # ffmpeg-compress local files above the inline size cap
+    download_provider="auto", # auto / yt-dlp / ai-douyin / wechat-local
+    download_dir=None,      # None = temporary download deleted after analysis
+    keep_download=False,
+    cookies=None,           # explicit only; absolute cookies.txt path
+    cookies_from_browser=None, # explicit only; e.g. "chrome"
+    download_timeout=600,
 )
 # result["analysis"] = the structured result;  result["usage"] = tokens / cost / seconds
 ```
 
-`analyze_one` is idempotent and side-effect-free (except a compression temp file it deletes
-in a `finally`). It raises `ValueError` (bad input) / `RuntimeError` (API / network / missing
-key) so callers can `try` and continue.
+`analyze_one` cleans its temporary download/compression files in `finally`. Passing
+`download_dir`/`keep_download`, or using the external WeChat downloader, intentionally leaves a
+downloaded file behind. It raises `ValueError` (bad input/source resolution) or `RuntimeError`
+(Gemini API/network/missing key), so callers can `try` and continue.
 
 ### B. Write a JSON file (cross-process / cross-agent)
 
@@ -42,6 +50,9 @@ python scripts/analyze_video.py "<source>" --intent reverse --fps 0.5 --out anal
 Your downstream step just `Read`s the JSON. **For high-token video analysis, isolate it in a
 sub-agent**: run the analysis inside the agent and return only a summary -- don't push the
 raw base64 / long JSON back into the main context.
+
+For URL routing, credentials, and the WeChat local-service contract, read
+[`url-sources.md`](url-sources.md).
 
 ---
 

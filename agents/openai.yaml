@@ -1,0 +1,4 @@
+interface:
+  display_name: "叁笙 Gemini 视频理解"
+  short_description: "解析本地与平台视频，自动下载后交给 Gemini 深度理解"
+  default_prompt: "使用 $sansheng-gemini-video 解析这个本地视频或平台链接，并输出带时间线的视听分析。"

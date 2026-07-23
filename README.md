@@ -8,7 +8,7 @@
 
 Claude 本身看不了视频,只能从抽出来的几帧里猜。这个 skill 把**整段视频**(画面 + 声音 + 时序)一次性交给 Gemini,返回**机器可读的 JSON**:视频里发生了什么、这段素材达不达标、或者一个创作者的视觉 / 音频手法怎么拆。
 
-它是一个**感知层** —— 不下载、不剪辑、不发布,只负责"看见"。看见之后要干什么(选片、剪辑、写脚本),交给你自己的流程。
+它是一个带**视频源解析**的感知层:YouTube 由 Gemini 免下载直读;B站 / 小红书 / 抖音等链接在需要时自动下载;微信视频号可接本地下载解密服务。它不剪辑、不发布,只负责把可用媒体交给 Gemini "看见"。
 
 ## 它吐出什么样的东西 —— 先看产出
 
@@ -67,9 +67,9 @@ Claude 本身看不了视频,只能从抽出来的几帧里猜。这个 skill �
 
 ## 什么时候用
 
-对 Claude 说 *"分析这个视频"* *"分析这个录屏"* *"这段视频能不能用"* *"把这个文件夹的素材批量筛一遍"*,或直接丢一个本地视频 / YouTube 链接问里面是什么 —— Claude 接起这个 skill 跑 `analyze_video.py`。
+对 Claude 说 *"分析这个视频"* *"分析这个录屏"* *"这段视频能不能用"* *"把这个文件夹的素材批量筛一遍"*,或直接丢一个本地视频 / YouTube / B站 / 小红书 / 抖音 / 微信视频号链接问里面是什么 —— Claude 接起这个 skill 跑 `analyze_video.py`。
 
-**不适合**:下载(用 `yt-dlp`)、要字幕 / 文字摘要(用字幕工具)、剪辑 / 出片。
+**不适合**:只下载不分析、只要字幕 / 文字摘要(用字幕工具)、剪辑 / 出片。
 
 ## 安装
 
@@ -112,12 +112,17 @@ git clone https://gh-proxy.com/https://github.com/sandypoli-boop/sansheng-gemini
 ## 快速上手
 
 ```bash
-pip install requests            # 唯一第三方依赖(裸 REST,不用 SDK)
+pip install requests            # 唯一必需第三方依赖(裸 REST,不用 SDK)
 # ffmpeg 可选 —— 只在需要自动压缩超大本地视频时用
+# yt-dlp 可选 —— 分析 B站/小红书/抖音等非 YouTube 链接时用
+pip install -U yt-dlp
 cp .env.example .env            # 然后填 key(见下)
 python scripts/setup_check.py   # 环境 / key 健康检查
 python scripts/analyze_video.py "C:\path\to\clip.mp4"
+python scripts/analyze_video.py "https://www.bilibili.com/video/BV..."
 ```
+
+在线链接路由、Cookie 护栏和微信视频号本地服务要求见 [`references/url-sources.md`](references/url-sources.md)。默认下载到临时目录并在分析后清理;用 `--download-dir` 或 `--keep-download` 才保留。
 
 ## 我该用哪种 key
 
@@ -138,13 +143,13 @@ python scripts/analyze_video.py "C:\path\to\clip.mp4"
 
 ## 编程调用
 
-`analyze_one()` 可被 import、幂等、无副作用。高 token 分析建议放进子 agent 跑,只回摘要。接口 + `reverse` 输出契约在 [`references/integration.md`](references/integration.md)。
+`analyze_one()` 可被 import;默认临时下载与压缩文件都会在 `finally` 清理。高 token 分析建议放进子 agent 跑,只回摘要。接口 + `reverse` 输出契约在 [`references/integration.md`](references/integration.md)。
 
 ## 致谢 · Credits
 
-依赖健康检查(`setup_check.py`,静默 `--check` + 分级退出码)的设计借鉴自 **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)**(MIT),特此致谢。
+依赖健康检查(`setup_check.py`,静默 `--check` + 分级退出码)的设计借鉴自 **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)**(MIT);短视频解析代理降级路径参考 **[imlewc/video-to-subtitle-summary-skill](https://github.com/imlewc/video-to-subtitle-summary-skill)**(MIT)。微信视频号通过 **[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** 的本地 HTTP API 接棒,不复制其源码。
 
-本 skill 仅有一个第三方运行依赖 `requests`(裸 REST 调 Gemini,不捆绑 SDK);`ffmpeg` 为可选(压缩超大视频)、`yt-dlp` 仅 YouTube 路径需要 —— 均请自行安装,各自保留其许可。本仓以 MIT 分发,不捆绑第三方代码。
+本 skill 仅有一个必需第三方运行依赖 `requests`(裸 REST 调 Gemini,不捆绑 SDK);`ffmpeg` 为可选(压缩超大视频),`yt-dlp` 为非 YouTube URL 下载主路。微信视频号上游需用户单独安装并初始化;各项目保留自身许可,本仓不捆绑其代码。
 
 ## 配套文章 · Article
 

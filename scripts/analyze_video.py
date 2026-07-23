@@ -1,7 +1,8 @@
 #!/usr/bin/env python
-"""sansheng-gemini-video 核心:视频源(本地/YouTube) -> Gemini 原生多模态分析 -> 结构化评估 JSON。
+"""sansheng-gemini-video 核心:视频源(本地/在线视频) -> Gemini 原生多模态分析 -> 结构化评估 JSON。
 走裸 REST(requests)+ ?key=,不依赖 google-genai SDK。按 key 前缀自动分流两种后端:
 AI Studio key(AIza 前缀 -> generativelanguage 端点)/ Vertex AI Express key(AQ. 前缀 -> Vertex 端点,需 GEMINI_VERTEX_PROJECT)。
+YouTube 由 Gemini 原生读取;其他链接经 source_resolver 下载/解密后以内联文件分析。
 analyze_one() 可被 batch_eval.py 或你自己的代码 import 复用。"""
 import argparse
 import base64
@@ -23,6 +24,8 @@ except Exception:
     pass
 
 import requests
+
+from source_resolver import is_youtube_url, resolve_source
 
 # ---------- .env 兜底加载(环境变量优先;仅本进程内存读取,绝不写盘/打印)----------
 # .env 兜底位置:本 skill 目录、当前工作目录。所有配置(含 GEMINI_VERTEX_PROJECT)都可写进 .env,
@@ -131,8 +134,7 @@ def _redact(text):
 
 
 def is_youtube(s):
-    low = s.lower()
-    return bool(re.match(r"https?://", s, re.I)) and ("youtube.com" in low or "youtu.be" in low)
+    return is_youtube_url(s)
 
 
 def to_offset(s):
@@ -215,14 +217,13 @@ def compress_audio_for_inline(src, target_mb):
 
 
 def build_video_part(src, auto_compress=True):
-    """三类输入归一成 (part, meta)。失败抛 ValueError(供 batch 捕获)。
+    """已归一输入转成 Gemini part。失败抛 ValueError(供 batch 捕获)。
     本地超 inline 上限时:auto_compress + 有 ffmpeg -> 自动转码压缩;否则抛带手动命令的错误。
     压缩产生的临时文件路径放 meta['_tmp'],由 analyze_one 用完删除。"""
     if is_youtube(src):
         return {"fileData": {"fileUri": src, "mimeType": "video/*"}}, {"kind": "youtube", "ref": src}
     if re.match(r"https?://", src, re.I):
-        raise ValueError(f"只支持 YouTube 链接和本地绝对路径;其他网址(Vimeo/B站/直链等)"
-                         f"请先用 yt-dlp 下载到本地再传: {src}")
+        raise ValueError(f"链接没有经过 source_resolver 归一: {src}")
     p = Path(src)
     if not p.is_absolute():
         raise ValueError(f"必须用绝对路径: {src}")
@@ -378,21 +379,41 @@ def post_with_retry(url, body, tries=3):
 
 def analyze_one(source, intent="understand", rubric=None, start=None, end=None,
                 fps=None, media_resolution="low", model=None, custom_prompt=None,
-                custom_schema=None, auto_compress=True):
+                custom_schema=None, auto_compress=True, download_provider="auto",
+                download_dir=None, keep_download=False, cookies=None,
+                cookies_from_browser=None, download_timeout=600):
     """核心:分析一个视频源,返回结构化 result dict。供脚本与其他 skill 复用。
     intent: understand(通用理解)/ screening(素材验收)/ reverse(逆向拆解 ⑤视觉⑥音频)。
     custom_prompt: 调用方自定义分析指令(给了就不走内置 intent 的 prompt)。
     custom_schema: 配合 custom_prompt 传入自定义 responseSchema,强制结构化输出;不传则 custom_prompt
                    走自由文本。让调用方(你的编排层)定义自己要的分析结构,本脚本保持通用、
                    不内置某个上层的业务字段(分析什么由调用方出指令)。
-    auto_compress: 本地视频超 inline 上限时自动 ffmpeg 压缩(需 ffmpeg)。"""
+    auto_compress: 本地视频超 inline 上限时自动 ffmpeg 压缩(需 ffmpeg)。
+    download_provider: URL 路由(auto/yt-dlp/ai-douyin/wechat-local);YouTube 始终原生直读。
+    cookies / cookies_from_browser: 仅显式传入时交给 yt-dlp,绝不默认读取浏览器 Cookie。"""
     model = model or DEFAULT_MODEL
     key = load_key()
     if not key:
         raise RuntimeError("没有 API key:设环境变量 GOOGLE_API_KEY 或 GEMINI_API_KEY,或写进 skill 目录 / cwd 的 .env")
-    vpart, meta = build_video_part(source, auto_compress=auto_compress)
-    tmp_path = meta.pop("_tmp", None)   # 压缩临时文件,出 result 前摘掉,finally 删
+    resolved = None
+    tmp_path = None
     try:
+        resolved = resolve_source(
+            source,
+            provider=download_provider,
+            download_dir=download_dir,
+            keep_download=keep_download,
+            cookies=cookies,
+            cookies_from_browser=cookies_from_browser,
+            timeout=download_timeout,
+            ai_douyin_key=_cfg("AI_DOUYIN_API_KEY"),
+            ai_douyin_base=_cfg("AI_DOUYIN_API_BASE", "https://ai-douyin.top9.cc"),
+            wechat_api_base=_cfg("GEMINI_VIDEO_WECHAT_API_BASE", "http://127.0.0.1:2022"),
+        )
+        vpart, meta = build_video_part(resolved.analysis_source, auto_compress=auto_compress)
+        tmp_path = meta.pop("_tmp", None)   # 压缩临时文件,出 result 前摘掉,finally 删
+        if resolved.metadata:
+            meta.update(resolved.metadata)
         vm = {}
         if start:
             vm["startOffset"] = to_offset(start)
@@ -461,11 +482,13 @@ def analyze_one(source, intent="understand", rubric=None, start=None, end=None,
                 Path(tmp_path).unlink()
             except OSError:
                 pass
+        if resolved is not None:
+            resolved.cleanup()
 
 
 def main():
     ap = argparse.ArgumentParser(description="Gemini 原生视频分析(AI Studio / Vertex Express,按 key 自动分流)")
-    ap.add_argument("source", help="本地视频绝对路径 或 YouTube 链接")
+    ap.add_argument("source", help="本地视频绝对路径 或在线视频链接")
     ap.add_argument("--intent", choices=["understand", "screening", "reverse"], default="understand",
                     help="understand=通用理解;screening=素材验收打分(配 --rubric);reverse=逆向拆解创作者的⑤视觉⑥音频手法")
     ap.add_argument("--rubric", default=None, help="screening 用:验收标准文件(每行一条),留空用内置通用档")
@@ -479,6 +502,17 @@ def main():
     ap.add_argument("--media-resolution", choices=["low", "high"], default="low")
     ap.add_argument("--no-compress", dest="auto_compress", action="store_false",
                     help="超 inline 上限不自动压缩,直接报错给手动命令(默认自动 ffmpeg 压缩)")
+    ap.add_argument("--download-provider", choices=["auto", "yt-dlp", "ai-douyin", "wechat-local"],
+                    default="auto", help="非 YouTube 链接的下载/解析路由,默认自动")
+    ap.add_argument("--download-dir", default=None,
+                    help="保留下载文件的绝对目录;留空默认只存临时目录,分析后自动清理")
+    ap.add_argument("--keep-download", action="store_true",
+                    help="保留下载文件;未给 --download-dir 时保存到当前目录 _video_downloads")
+    ap.add_argument("--cookies", default=None,
+                    help="显式交给 yt-dlp 的 cookies.txt 绝对路径;默认不读 Cookie")
+    ap.add_argument("--cookies-from-browser", default=None,
+                    help="显式允许 yt-dlp 从指定浏览器读取 Cookie,如 chrome;默认不读取")
+    ap.add_argument("--download-timeout", type=int, default=600, help="下载/等待落盘超时秒数")
     ap.add_argument("--model", default=None)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
@@ -504,7 +538,13 @@ def main():
         result = analyze_one(args.source, intent=args.intent, rubric=rubric, start=args.start,
                              end=args.end, fps=args.fps, media_resolution=args.media_resolution,
                              model=args.model, custom_prompt=args.prompt, custom_schema=custom_schema,
-                             auto_compress=args.auto_compress)
+                             auto_compress=args.auto_compress,
+                             download_provider=args.download_provider,
+                             download_dir=args.download_dir,
+                             keep_download=args.keep_download,
+                             cookies=args.cookies,
+                             cookies_from_browser=args.cookies_from_browser,
+                             download_timeout=args.download_timeout)
     except (ValueError, RuntimeError) as e:
         raise SystemExit(str(e))
 

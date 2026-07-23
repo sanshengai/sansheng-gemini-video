@@ -10,8 +10,9 @@ Claude can't watch video; it can only guess from a few sampled frames. This skil
 **whole clip** (picture + audio + timing) to Gemini and returns **machine-readable JSON**:
 what happens, whether footage passes a rubric, or a breakdown of a creator's visual & audio craft.
 
-It's a **perception layer** -- it doesn't download, edit, or publish; it just *sees*. What you do
-with the seeing (selecting, editing, scripting) is your own workflow's job.
+It's a **perception layer with source resolution**: Gemini reads public YouTube URLs directly;
+Bilibili, Xiaohongshu, Douyin, and similar links are downloaded when needed; WeChat Channels can
+hand off to a local download/decryption service. It doesn't edit or publish video.
 
 ## What the output looks like -- see it before you install
 
@@ -77,11 +78,10 @@ env / `.env` only, never printed; `?key=` is redacted to `***` in any error text
 ## When to use
 
 Say *"analyze this video"*, *"分析这个录屏"*, *"can this clip be used?"*, *"batch-screen this
-folder of clips"*, or drop a local video / a YouTube URL and ask what's in it -- Claude picks up
-this skill and runs `analyze_video.py`.
+folder of clips"*, or drop a local video / YouTube / Bilibili / Xiaohongshu / Douyin / WeChat
+Channels URL and ask what's in it -- Claude picks up this skill and runs `analyze_video.py`.
 
-**Not** for: downloading (`yt-dlp`), getting subtitles / a text summary (a subtitle tool), or
-editing / producing a video.
+**Not** for: download-only requests, subtitles / text-only summaries, or editing / production.
 
 ## Install
 
@@ -113,12 +113,19 @@ To hear about new versions: watch the repo's [Releases](../../releases), or clic
 ## Quick start
 
 ```bash
-pip install requests            # the only third-party dependency (raw REST, no SDK)
+pip install requests            # the only required third-party dependency (raw REST, no SDK)
 # ffmpeg is optional -- only to auto-compress large local videos
+# yt-dlp is optional -- needed for non-YouTube web video URLs
+pip install -U yt-dlp
 cp .env.example .env            # then set your key (see below)
 python scripts/setup_check.py   # environment / key health check
 python scripts/analyze_video.py "C:\path\to\clip.mp4"
+python scripts/analyze_video.py "https://www.bilibili.com/video/BV..."
 ```
+
+See [`references/url-sources.md`](references/url-sources.md) for URL routing, cookie safeguards,
+and the local WeChat Channels service contract. Downloads are temporary by default; use
+`--download-dir` or `--keep-download` to retain them.
 
 ## Which key do I need?
 
@@ -147,19 +154,23 @@ See [`references/visual-grounding-limits.md`](references/visual-grounding-limits
 
 ## Programmatic use
 
-`analyze_one()` is importable, idempotent, and side-effect-free. For high-token analyses, run it
-inside a sub-agent and return only the summary. Interface + the `reverse` output contract are in
+`analyze_one()` is importable and cleans temporary downloads/compressed files in `finally`. For
+high-token analyses, run it inside a sub-agent and return only the summary. Interface + the `reverse` output contract are in
 [`references/integration.md`](references/integration.md).
 
 ## Credits
 
 The dependency health-check (`setup_check.py`, silent `--check` with graded exit codes) is
 modeled on **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)** (MIT).
+The short-video resolver fallback follows the MIT design in
+**[imlewc/video-to-subtitle-summary-skill](https://github.com/imlewc/video-to-subtitle-summary-skill)**.
+WeChat Channels hands off through the local HTTP API of
+**[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** without copying its source.
 
-This skill has a single third-party runtime dependency, `requests` (raw REST against Gemini, no
-bundled SDK); `ffmpeg` is optional (compressing oversized video) and `yt-dlp` is only needed for
-the YouTube path -- install them yourself; each keeps its own license. This repo ships under MIT
-and bundles no third-party code.
+This skill has one required third-party runtime dependency, `requests` (raw REST against Gemini,
+no bundled SDK); `ffmpeg` is optional and `yt-dlp` is the primary downloader for non-YouTube URLs.
+The WeChat upstream must be installed and initialized separately. Each project keeps its own
+license; this repo bundles none of their source code.
 
 ## Article
 

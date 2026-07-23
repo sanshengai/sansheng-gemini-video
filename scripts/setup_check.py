@@ -13,12 +13,16 @@ Exit codes(--check 模式):
   3  缺 API key(与 analyze_video.load_key 同源:环境变量 GOOGLE_API_KEY / GEMINI_API_KEY,或 skill 目录 / cwd 的 .env)
   4  缺 ffmpeg/ffprobe(可选项,仅在 --require-ffmpeg 时算失败)
   5  Python 版本过低
+  6  缺 yt-dlp(--require-url-download)
+  7  微信视频号本地服务不可用(--require-wechat)
 """
 import argparse
 import importlib.util
 import os
 import shutil
+import socket
 import sys
+import urllib.parse
 from pathlib import Path
 
 MIN_PY = (3, 10)
@@ -50,6 +54,34 @@ def _has_key() -> bool:
     return False
 
 
+def _env_value(name: str) -> str | None:
+    if os.environ.get(name):
+        return os.environ[name]
+    for env_path in KEY_ENV_PATHS:
+        try:
+            if env_path.is_file():
+                for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    s = line.strip()
+                    if s.startswith(name + "="):
+                        return s.split("=", 1)[1].strip().strip("\"'") or None
+        except OSError:
+            pass
+    return None
+
+
+def _wechat_api_ready() -> bool:
+    """只探测本机端口，不向远程 resolver 发送请求。"""
+    base = _env_value("GEMINI_VIDEO_WECHAT_API_BASE") or "http://127.0.0.1:2022"
+    parsed = urllib.parse.urlparse(base)
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    try:
+        with socket.create_connection((parsed.hostname, parsed.port or 80), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
 def run_checks():
     """返回 (results, first_failure_code)。results 是 [(name, ok, hint)] 列表。"""
     results = []
@@ -79,7 +111,18 @@ def run_checks():
     results.append(("ffmpeg(可选,预处理/机检)", ffmpeg_ok, "Windows: choco install ffmpeg"))
     results.append(("ffprobe(可选,读时长/分辨率)", ffprobe_ok, "随 ffmpeg 一起安装"))
 
-    return results, fail_code, (ffmpeg_ok and ffprobe_ok)
+    ytdlp_ok = shutil.which("yt-dlp") is not None or importlib.util.find_spec("yt_dlp") is not None
+    results.append(("yt-dlp(非 YouTube 链接下载)", ytdlp_ok, "python -m pip install -U yt-dlp"))
+
+    ai_douyin_ok = bool(_env_value("AI_DOUYIN_API_KEY"))
+    results.append(("AI Douyin key(可选短视频平台降级)", ai_douyin_ok,
+                    "仅需代理降级时配置 AI_DOUYIN_API_KEY;未配置不影响 yt-dlp 主路"))
+
+    wechat_ok = _wechat_api_ready()
+    results.append(("wx_channels_download(微信视频号解析/解密)", wechat_ok,
+                    "安装并初始化 wx_channels_download,确认本机 API http://127.0.0.1:2022 可用"))
+
+    return results, fail_code, (ffmpeg_ok and ffprobe_ok), ytdlp_ok, wechat_ok
 
 
 def main():
@@ -93,15 +136,34 @@ def main():
                     help="静默模式:成功零输出,失败给分级 exit code")
     ap.add_argument("--require-ffmpeg", action="store_true",
                     help="把 ffmpeg/ffprobe 也算作硬依赖(默认可选)")
+    ap.add_argument("--require-url-download", action="store_true",
+                    help="把 yt-dlp 算作硬依赖(分析 B站/小红书/抖音等 URL 时使用)")
+    ap.add_argument("--require-wechat", action="store_true",
+                    help="要求微信视频号本地下载/解密服务已启动")
     args = ap.parse_args()
 
-    results, fail_code, ffmpeg_ready = run_checks()
+    results, fail_code, ffmpeg_ready, ytdlp_ready, wechat_ready = run_checks()
     if args.require_ffmpeg and ffmpeg_ready is False and fail_code == 0:
         fail_code = 4
+    if args.require_url_download and not ytdlp_ready and fail_code == 0:
+        fail_code = 6
+    if args.require_wechat and not wechat_ready and fail_code == 0:
+        fail_code = 7
 
     if args.check:
         if fail_code:
-            missing = [name for name, ok, _ in results if not ok]
+            required_names = {
+                "Python >= 3.10",
+                "requests(analyze_video 唯一第三方依赖)",
+                "Gemini API key(GOOGLE_API_KEY / GEMINI_API_KEY)",
+            }
+            if args.require_ffmpeg:
+                required_names.update({"ffmpeg(可选,预处理/机检)", "ffprobe(可选,读时长/分辨率)"})
+            if args.require_url_download:
+                required_names.add("yt-dlp(非 YouTube 链接下载)")
+            if args.require_wechat:
+                required_names.add("wx_channels_download(微信视频号解析/解密)")
+            missing = [name for name, ok, _ in results if not ok and name in required_names]
             print(f"FAIL: 缺少 {', '.join(missing)}", file=sys.stderr)
         sys.exit(fail_code)
 
@@ -113,9 +175,9 @@ def main():
         if not ok:
             print(f"        修复: {hint}")
     print("=" * 40)
-    if fail_code or (args.require_ffmpeg and not ffmpeg_ready):
+    if fail_code:
         print("环境未就绪,按上面修复后重跑。")
-        sys.exit(fail_code or 4)
+        sys.exit(fail_code)
     print("环境就绪,可以跑 analyze_video.py。")
     sys.exit(0)
 
