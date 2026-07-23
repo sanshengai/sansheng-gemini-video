@@ -3,10 +3,11 @@
 
 路由原则：
 - YouTube 公共链接由 Gemini 原生读取，不下载。
-- 微信视频号分享链接交给本机 wx_channels_download API，完成解析、下载和解密。
+- 微信视频号分享链接优先使用用户一次性保存的元宝 Cookie 纯后台解析；已经就绪的
+  wx_channels_download 本地 API 只作末级兜底，脚本绝不自行启动微信或修改代理。
 - 其他链接优先 yt-dlp；已显式配置 AI Douyin key 时可作短视频平台降级。
 
-本模块不读取浏览器 Cookie；只有调用方显式传入 --cookies / --cookies-from-browser 才使用。
+本模块不自动读取浏览器 Cookie；只有调用方显式授权的凭证才会使用。
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,8 @@ from typing import Any, Callable
 
 import requests
 
+from wechat_auth import load_cookie as load_saved_yuanbao_cookie
+
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,6 +41,15 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 WECHAT_HOSTS = {"weixin.qq.com", "channels.weixin.qq.com", "finder.video.qq.com"}
 AI_DOUYIN_PLATFORMS = {"bilibili", "xiaohongshu", "douyin", "tiktok"}
 _ENV_FILES = (Path(__file__).resolve().parent.parent / ".env", Path.cwd() / ".env")
+YUANBAO_PARSE_URL = "https://yuanbao.tencent.com/api/weixin/get_parse_result"
+CHANNELS_FEED_URL = "https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info"
+YUANBAO_CHAT_PATH = "naQivTmsDa/cf4d0079-ed1b-4c55-a3f3-2ca1379727d1"
+YUANBAO_USER_ID = "b9575f6b0a8c4a55a08096904a5ef20a"
+YUANBAO_DEVICE_ID = "1921b001708100d7fa31002b9646bd0cc15a3e2e1f"
+YUANBAO_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+)
 
 
 class SourceResolutionError(ValueError):
@@ -257,7 +270,13 @@ def fetch_ai_douyin_candidates(
     return result
 
 
-def download_first_candidate(candidates: list[str], output: Path, *, timeout: int = 120) -> Path:
+def download_first_candidate(
+    candidates: list[str],
+    output: Path,
+    *,
+    timeout: int = 120,
+    headers: dict[str, str] | None = None,
+) -> Path:
     """流式下载首个可用候选；错误中不打印带签名的完整 URL。"""
     errors = []
     for index, candidate in enumerate(candidates, 1):
@@ -266,7 +285,7 @@ def download_first_candidate(candidates: list[str], output: Path, *, timeout: in
         try:
             with requests.get(
                 candidate,
-                headers={"User-Agent": USER_AGENT},
+                headers={"User-Agent": USER_AGENT, **(headers or {})},
                 stream=True,
                 allow_redirects=True,
                 timeout=(10, timeout),
@@ -286,6 +305,225 @@ def download_first_candidate(candidates: list[str], output: Path, *, timeout: in
     raise SourceResolutionError("所有解析代理候选均下载失败: " + "; ".join(errors))
 
 
+def load_yuanbao_cookie() -> str | None:
+    """按显式配置 -> 私密文件 -> Windows DPAPI 的顺序读取元宝 Cookie。"""
+    direct = _config_value("GEMINI_VIDEO_YUANBAO_COOKIE")
+    if direct:
+        return direct.strip()
+    cookie_file = _config_value("GEMINI_VIDEO_YUANBAO_COOKIE_FILE")
+    if cookie_file:
+        path = Path(cookie_file).expanduser()
+        if not path.is_absolute() or not path.is_file():
+            raise SourceResolutionError("GEMINI_VIDEO_YUANBAO_COOKIE_FILE 必须指向存在的绝对路径")
+        value = path.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    return load_saved_yuanbao_cookie()
+
+
+def _yuanbao_headers(cookie: str) -> dict[str, str]:
+    """元宝 Web 解析接口所需请求头；Cookie 只驻留内存，不写日志。
+
+    x-* 值来自公开 SPH Web 协议，并非用户凭证；真正的会话权限只来自 Cookie。
+    """
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Content-Type": "application/json",
+        "Origin": "https://yuanbao.tencent.com",
+        "Referer": f"https://yuanbao.tencent.com/chat/{YUANBAO_CHAT_PATH}",
+        "User-Agent": YUANBAO_USER_AGENT,
+        "Sec-Ch-Ua": '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "T-Userid": YUANBAO_USER_ID,
+        "X-Agentid": YUANBAO_CHAT_PATH,
+        "X-Commit-Tag": "72282a0d",
+        "X-Device-Id": YUANBAO_DEVICE_ID,
+        "X-Hy106": "",
+        "X-Hy92": "e963067ffa31002b9646bd0c03000008b1951a",
+        "X-Hy93": YUANBAO_DEVICE_ID,
+        "X-Id": YUANBAO_USER_ID,
+        "X-Instance-Id": "5",
+        "X-Language": "zh-CN",
+        "X-OS_Version": "Mac OS(10.15.7)-Blink",
+        "X-Platform": "mac",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Source": "web",
+        "X-Web-Third-Source": "main",
+        "X-Webdriver": "0",
+        "X-Webversion": "2.69.0",
+        "X-Ybuitest": "0",
+        "Cookie": cookie,
+    }
+
+
+def _validate_wechat_share_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() != "weixin.qq.com"
+        or not re.fullmatch(r"/sph/[A-Za-z0-9_-]+/?", parsed.path)
+    ):
+        raise SourceResolutionError("仅接受 https://weixin.qq.com/sph/<ID> 格式的视频号分享链接")
+
+
+def _is_allowed_wechat_media_url(value: str) -> bool:
+    parsed = urllib.parse.urlparse(value)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme.lower() == "https" and (
+        host == "finder.video.qq.com" or host.endswith(".video.qq.com")
+    )
+
+
+def fetch_yuanbao_video_candidates(
+    url: str,
+    *,
+    cookie: str,
+    timeout: int = 60,
+) -> tuple[list[str], dict[str, Any], str]:
+    """纯后台把视频号分享链接换成腾讯 CDN 直链，不启动微信或系统代理。"""
+    _validate_wechat_share_url(url)
+    try:
+        parsed_response = requests.post(
+            YUANBAO_PARSE_URL,
+            headers=_yuanbao_headers(cookie),
+            json={"type": "video_channel_url", "url": url, "scene": 1},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise SourceResolutionError(f"元宝后台解析请求失败: {exc}") from exc
+    if parsed_response.status_code in {401, 403}:
+        raise SourceResolutionError(
+            "元宝 Cookie 已失效；请重新运行 python scripts/wechat_auth.py 更新一次性授权"
+        )
+    if not 200 <= parsed_response.status_code < 300:
+        raise SourceResolutionError(f"元宝后台解析失败: HTTP {parsed_response.status_code}")
+    try:
+        parsed_payload = parsed_response.json()
+    except ValueError as exc:
+        raise SourceResolutionError("元宝后台解析返回的不是合法 JSON") from exc
+    parse_data = parsed_payload.get("data") or {}
+    playable_url = str(parse_data.get("playable_url") or "")
+    playable = urllib.parse.urlparse(playable_url)
+    query = urllib.parse.parse_qs(playable.query)
+    general_token = (query.get("token") or [""])[0]
+    export_id = (query.get("eid") or [""])[0] or str(parse_data.get("wx_export_id") or "")
+    if not general_token or not export_id:
+        message = str(parsed_payload.get("msg") or "缺少 token/eid")
+        raise SourceResolutionError(f"元宝未能识别该分享链接: {message}")
+
+    rid = f"{int(time.time()):x}-{secrets.token_hex(4)}"
+    page_url = "https://channels.weixin.qq.com/finder-preview/pages/feed"
+    referer = (
+        page_url
+        + "?entry_card_type=48&comment_scene=39&appid=0&token="
+        + urllib.parse.quote(general_token, safe="")
+        + "&entry_scene=0&eid="
+        + urllib.parse.quote(export_id, safe="")
+    )
+    try:
+        feed_response = requests.post(
+            CHANNELS_FEED_URL,
+            params={"_rid": rid, "_pageUrl": page_url},
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Content-Type": "application/json",
+                "Origin": "https://channels.weixin.qq.com",
+                "Referer": referer,
+                "Sec-Ch-Ua": '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"macOS"',
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "User-Agent": YUANBAO_USER_AGENT,
+            },
+            json={"baseReq": {"generalToken": general_token}, "exportId": export_id},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise SourceResolutionError(f"视频号详情请求失败: {exc}") from exc
+    if not 200 <= feed_response.status_code < 300:
+        raise SourceResolutionError(f"视频号详情请求失败: HTTP {feed_response.status_code}")
+    try:
+        feed_payload = feed_response.json()
+    except ValueError as exc:
+        raise SourceResolutionError("视频号详情返回的不是合法 JSON") from exc
+    if feed_payload.get("errCode") not in {None, 0}:
+        raise SourceResolutionError(f"视频号详情解析失败: {feed_payload.get('errMsg') or '未知错误'}")
+    data = feed_payload.get("data") or {}
+    feed = data.get("feedInfo") or {}
+    candidates = []
+    for candidate in (
+        (feed.get("h264VideoInfo") or {}).get("videoUrl"),
+        feed.get("videoUrl"),
+        (feed.get("h265VideoInfo") or {}).get("videoUrl"),
+    ):
+        value = str(candidate or "").strip()
+        if _is_allowed_wechat_media_url(value) and value not in candidates:
+            candidates.append(value)
+    if not candidates:
+        raise SourceResolutionError("视频号详情中没有可下载的视频直链")
+    safe_meta = {
+        "author": str((data.get("authorInfo") or {}).get("nickname") or ""),
+        "description": str(feed.get("description") or ""),
+    }
+    return candidates, safe_meta, referer
+
+
+def resolve_wechat_yuanbao(
+    url: str,
+    *,
+    cookie: str,
+    download_dir: str | None = None,
+    keep_download: bool = False,
+    timeout: int = 600,
+) -> ResolvedSource:
+    """元宝 Cookie -> 视频直链 -> 本地文件；全程后台且不操作微信 UI。"""
+    root, holder = _prepare_download_dir(download_dir, keep_download)
+    try:
+        candidates, parsed_meta, referer = fetch_yuanbao_video_candidates(
+            url, cookie=cookie, timeout=min(timeout, 60)
+        )
+        output = root / f"gvid_{uuid.uuid4().hex[:8]}.mp4"
+        media = download_first_candidate(
+            candidates,
+            output,
+            timeout=min(timeout, 300),
+            headers={"Referer": referer},
+        )
+        metadata = {
+            "kind": "url_downloaded",
+            "ref": url,
+            "platform": "wechat-channels",
+            "route": "download",
+            "resolver": "yuanbao-cookie",
+            "downloaded_size_mb": round(media.stat().st_size / 1024 / 1024, 1),
+            **parsed_meta,
+        }
+        if holder is None:
+            metadata["download_path"] = str(media)
+        return ResolvedSource(str(media), metadata, holder)
+    except Exception:
+        if holder is not None:
+            holder.cleanup()
+        raise
+
+
+def _wechat_local_ready(api_base: str) -> bool:
+    try:
+        response = requests.get(api_base.rstrip("/") + "/api/status", timeout=2)
+        payload = response.json() if response.status_code == 200 else {}
+        return bool((((payload.get("data") or {}).get("channels") or {}).get("available")))
+    except (requests.RequestException, ValueError):
+        return False
+
+
 def resolve_wechat_local(
     url: str,
     *,
@@ -294,7 +532,7 @@ def resolve_wechat_local(
     poll_interval: float = 1.0,
 ) -> ResolvedSource:
     """调用 wx_channels_download 本地 API，等待已解密媒体落盘。"""
-    endpoint = api_base.rstrip("/") + "/api/task/create/channels"
+    endpoint = api_base.rstrip("/") + "/api/task/create_channels"
     try:
         response = requests.post(endpoint, json={"url": url, "mp3": False, "cover": False}, timeout=30)
     except requests.RequestException as exc:
@@ -372,12 +610,35 @@ def resolve_source(
             source,
             {"kind": "youtube", "ref": source, "platform": "youtube", "route": "gemini-direct"},
         )
-    if provider not in {"auto", "yt-dlp", "ai-douyin", "wechat-local"}:
+    if provider not in {"auto", "yt-dlp", "ai-douyin", "wechat-yuanbao", "wechat-local"}:
         raise SourceResolutionError(f"未知下载 provider: {provider}")
     if platform == "wechat-channels":
-        if provider not in {"auto", "wechat-local"}:
-            raise SourceResolutionError("微信视频号链接只能使用 wechat-local provider")
-        return resolve_wechat_local(source, api_base=wechat_api_base, timeout=timeout)
+        if provider not in {"auto", "wechat-yuanbao", "wechat-local"}:
+            raise SourceResolutionError("微信视频号链接只能使用 wechat-yuanbao 或 wechat-local provider")
+        if provider in {"auto", "wechat-yuanbao"}:
+            cookie = load_yuanbao_cookie()
+            if cookie:
+                try:
+                    return resolve_wechat_yuanbao(
+                        source,
+                        cookie=cookie,
+                        download_dir=download_dir,
+                        keep_download=keep_download,
+                        timeout=timeout,
+                    )
+                except SourceResolutionError:
+                    if provider == "wechat-yuanbao":
+                        raise
+            elif provider == "wechat-yuanbao":
+                raise SourceResolutionError(
+                    "微信视频号后台解析尚未授权；请先运行 python scripts/wechat_auth.py。不会自动打开微信或浏览器。"
+                )
+        if provider == "wechat-local" or _wechat_local_ready(wechat_api_base):
+            return resolve_wechat_local(source, api_base=wechat_api_base, timeout=timeout)
+        raise SourceResolutionError(
+            "微信视频号需要一次性元宝 Cookie 授权；请运行 python scripts/wechat_auth.py。"
+            "本次未启动微信、浏览器、系统代理或登录窗口。"
+        )
     if provider == "wechat-local":
         raise SourceResolutionError("wechat-local provider 只支持微信视频号链接")
 
@@ -447,7 +708,11 @@ def resolve_source(
 def main() -> int:
     parser = argparse.ArgumentParser(description="把在线视频链接下载/归一为 Gemini 可分析的本地媒体")
     parser.add_argument("source")
-    parser.add_argument("--provider", choices=["auto", "yt-dlp", "ai-douyin", "wechat-local"], default="auto")
+    parser.add_argument(
+        "--provider",
+        choices=["auto", "yt-dlp", "ai-douyin", "wechat-yuanbao", "wechat-local"],
+        default="auto",
+    )
     parser.add_argument("--download-dir", default=None)
     parser.add_argument("--cookies", default=None)
     parser.add_argument("--cookies-from-browser", default=None)

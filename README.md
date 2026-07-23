@@ -8,7 +8,7 @@
 
 Claude 本身看不了视频,只能从抽出来的几帧里猜。这个 skill 把**整段视频**(画面 + 声音 + 时序)一次性交给 Gemini,返回**机器可读的 JSON**:视频里发生了什么、这段素材达不达标、或者一个创作者的视觉 / 音频手法怎么拆。
 
-它是一个带**视频源解析**的感知层:YouTube 由 Gemini 免下载直读;B站 / 小红书 / 抖音等链接在需要时自动下载;微信视频号可接本地下载解密服务。它不剪辑、不发布,只负责把可用媒体交给 Gemini "看见"。
+它是一个带**视频源解析**的感知层:YouTube 由 Gemini 免下载直读;B站 / 小红书 / 抖音等链接在需要时自动下载;微信视频号一次授权后可在后台完成解析、下载与分析。它不剪辑、不发布,只负责把可用媒体交给 Gemini "看见"。
 
 ## 它吐出什么样的东西 —— 先看产出
 
@@ -120,9 +120,12 @@ cp .env.example .env            # 然后填 key(见下)
 python scripts/setup_check.py   # 环境 / key 健康检查
 python scripts/analyze_video.py "C:\path\to\clip.mp4"
 python scripts/analyze_video.py "https://www.bilibili.com/video/BV..."
+# 微信视频号首次使用才需做一次隐藏输入授权，之后同样直接传链接：
+python scripts/wechat_auth.py
+python scripts/analyze_video.py "https://weixin.qq.com/sph/..."
 ```
 
-在线链接路由、Cookie 护栏和微信视频号本地服务要求见 [`references/url-sources.md`](references/url-sources.md)。默认下载到临时目录并在分析后清理;用 `--download-dir` 或 `--keep-download` 才保留。
+微信授权默认用 Windows 当前用户 DPAPI 加密保存在仓库外；Skill 不读取浏览器 Cookie、不启动微信/浏览器、不改系统代理。在线链接路由与凭证护栏见 [`references/url-sources.md`](references/url-sources.md)。默认下载到临时目录并在分析后清理;用 `--download-dir` 或 `--keep-download` 才保留。
 
 ## 我该用哪种 key
 
@@ -147,9 +150,9 @@ python scripts/analyze_video.py "https://www.bilibili.com/video/BV..."
 
 ## 致谢 · Credits
 
-依赖健康检查(`setup_check.py`,静默 `--check` + 分级退出码)的设计借鉴自 **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)**(MIT);短视频解析代理降级路径参考 **[imlewc/video-to-subtitle-summary-skill](https://github.com/imlewc/video-to-subtitle-summary-skill)**(MIT)。微信视频号通过 **[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** 的本地 HTTP API 接棒,不复制其源码。
+依赖健康检查(`setup_check.py`,静默 `--check` + 分级退出码)的设计借鉴自 **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)**(MIT);短视频解析代理降级路径参考 **[imlewc/video-to-subtitle-summary-skill](https://github.com/imlewc/video-to-subtitle-summary-skill)**(MIT)。微信视频号后台链参考 **[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** v260531 的公开 SPH 协议并保留来源；不捆绑其源码或二进制，本地 HTTP API 仅作可选兜底。
 
-本 skill 仅有一个必需第三方运行依赖 `requests`(裸 REST 调 Gemini,不捆绑 SDK);`ffmpeg` 为可选(压缩超大视频),`yt-dlp` 为非 YouTube URL 下载主路。微信视频号上游需用户单独安装并初始化;各项目保留自身许可,本仓不捆绑其代码。
+本 skill 仅有一个必需第三方运行依赖 `requests`(裸 REST 调 Gemini,不捆绑 SDK);`ffmpeg` 为可选(压缩超大视频),`yt-dlp` 为非 YouTube URL 下载主路。微信视频号默认后台链无需安装桌面下载器；各项目保留自身许可。
 
 ## 配套文章 · Article
 

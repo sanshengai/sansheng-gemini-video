@@ -389,7 +389,7 @@ def analyze_one(source, intent="understand", rubric=None, start=None, end=None,
                    走自由文本。让调用方(你的编排层)定义自己要的分析结构,本脚本保持通用、
                    不内置某个上层的业务字段(分析什么由调用方出指令)。
     auto_compress: 本地视频超 inline 上限时自动 ffmpeg 压缩(需 ffmpeg)。
-    download_provider: URL 路由(auto/yt-dlp/ai-douyin/wechat-local);YouTube 始终原生直读。
+    download_provider: URL 路由(auto/yt-dlp/ai-douyin/wechat-yuanbao/wechat-local);YouTube 始终原生直读。
     cookies / cookies_from_browser: 仅显式传入时交给 yt-dlp,绝不默认读取浏览器 Cookie。"""
     model = model or DEFAULT_MODEL
     key = load_key()
@@ -502,7 +502,7 @@ def main():
     ap.add_argument("--media-resolution", choices=["low", "high"], default="low")
     ap.add_argument("--no-compress", dest="auto_compress", action="store_false",
                     help="超 inline 上限不自动压缩,直接报错给手动命令(默认自动 ffmpeg 压缩)")
-    ap.add_argument("--download-provider", choices=["auto", "yt-dlp", "ai-douyin", "wechat-local"],
+    ap.add_argument("--download-provider", choices=["auto", "yt-dlp", "ai-douyin", "wechat-yuanbao", "wechat-local"],
                     default="auto", help="非 YouTube 链接的下载/解析路由,默认自动")
     ap.add_argument("--download-dir", default=None,
                     help="保留下载文件的绝对目录;留空默认只存临时目录,分析后自动清理")

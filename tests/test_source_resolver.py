@@ -90,14 +90,92 @@ class SourceResolverTests(unittest.TestCase):
             resolved = sr.resolve_wechat_local(
                 "https://weixin.qq.com/sph/demo", poll_interval=0, timeout=1
             )
+            self.assertEqual(
+                post.call_args.args[0],
+                "http://127.0.0.1:2022/api/task/create_channels",
+            )
             self.assertEqual(resolved.analysis_source, str(media))
             self.assertEqual(resolved.metadata["resolver"], "wx_channels_download")
             self.assertEqual(resolved.metadata["download_path"], str(media))
 
+    @patch.object(sr.requests, "post")
+    def test_yuanbao_cookie_resolves_share_link_without_wechat_ui(self, post):
+        post.side_effect = [
+            FakeResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wx_export_id": "export-demo",
+                        "playable_url": "https://channels.weixin.qq.com/feed?token=general-secret&eid=export-demo",
+                    },
+                }
+            ),
+            FakeResponse(
+                {
+                    "errCode": 0,
+                    "data": {
+                        "authorInfo": {"nickname": "作者"},
+                        "feedInfo": {
+                            "description": "简介",
+                            "h264VideoInfo": {"videoUrl": "https://finder.video.qq.com/video.mp4?token=signed"},
+                        },
+                    },
+                }
+            ),
+        ]
+        candidates, meta, referer = sr.fetch_yuanbao_video_candidates(
+            "https://weixin.qq.com/sph/demo", cookie="session=private-cookie-value"
+        )
+        self.assertEqual(candidates, ["https://finder.video.qq.com/video.mp4?token=signed"])
+        self.assertEqual(meta["author"], "作者")
+        self.assertIn("channels.weixin.qq.com", referer)
+        self.assertEqual(post.call_args_list[0].args[0], sr.YUANBAO_PARSE_URL)
+        self.assertEqual(post.call_args_list[1].args[0], sr.CHANNELS_FEED_URL)
+        self.assertEqual(post.call_args_list[0].kwargs["headers"]["Cookie"], "session=private-cookie-value")
+        self.assertNotIn("private-cookie-value", str(meta))
+
+    def test_yuanbao_rejects_non_sph_urls_before_network(self):
+        with patch.object(sr.requests, "post") as post, self.assertRaisesRegex(
+            sr.SourceResolutionError, "仅接受"
+        ):
+            sr.fetch_yuanbao_video_candidates(
+                "https://weixin.qq.com/not-sph/demo", cookie="session=private-cookie-value"
+            )
+        post.assert_not_called()
+
+    @patch.object(sr.requests, "post")
+    def test_yuanbao_rejects_untrusted_media_candidate(self, post):
+        post.side_effect = [
+            FakeResponse(
+                {
+                    "data": {
+                        "wx_export_id": "export-demo",
+                        "playable_url": "https://channels.weixin.qq.com/feed?token=t&eid=e",
+                    }
+                }
+            ),
+            FakeResponse(
+                {
+                    "errCode": 0,
+                    "data": {"feedInfo": {"videoUrl": "https://evil.example/video.mp4"}},
+                }
+            ),
+        ]
+        with self.assertRaisesRegex(sr.SourceResolutionError, "没有可下载"):
+            sr.fetch_yuanbao_video_candidates(
+                "https://weixin.qq.com/sph/demo", cookie="session=private-cookie-value"
+            )
+
+    @patch.object(sr, "load_yuanbao_cookie", return_value=None)
+    @patch.object(sr, "_wechat_local_ready", return_value=False)
+    def test_wechat_auto_missing_auth_never_opens_ui(self, _ready, _cookie):
+        with self.assertRaisesRegex(sr.SourceResolutionError, "未启动微信"):
+            sr.resolve_source("https://weixin.qq.com/sph/demo")
+
     @patch.object(sr.requests, "post", side_effect=sr.requests.ConnectionError("offline"))
     def test_wechat_local_reports_real_dependency(self, _post):
         with self.assertRaisesRegex(sr.SourceResolutionError, "wx_channels_download"):
-            sr.resolve_source("https://weixin.qq.com/sph/demo")
+            sr.resolve_source("https://weixin.qq.com/sph/demo", provider="wechat-local")
 
     def test_auto_falls_back_to_configured_proxy(self):
         with patch.object(

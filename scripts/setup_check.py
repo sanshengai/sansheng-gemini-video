@@ -14,7 +14,7 @@ Exit codes(--check 模式):
   4  缺 ffmpeg/ffprobe(可选项,仅在 --require-ffmpeg 时算失败)
   5  Python 版本过低
   6  缺 yt-dlp(--require-url-download)
-  7  微信视频号本地服务不可用(--require-wechat)
+  7  微信视频号后台授权与本地兜底均不可用(--require-wechat)
 """
 import argparse
 import importlib.util
@@ -24,6 +24,8 @@ import socket
 import sys
 import urllib.parse
 from pathlib import Path
+
+from wechat_auth import load_cookie as load_saved_yuanbao_cookie
 
 MIN_PY = (3, 10)
 # 必须与 analyze_video.load_key 同源:运行时读 GOOGLE_API_KEY 或 GEMINI_API_KEY
@@ -75,6 +77,20 @@ def _wechat_api_ready() -> bool:
     parsed = urllib.parse.urlparse(base)
     if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
         return False
+
+
+def _yuanbao_cookie_ready() -> bool:
+    if _env_value("GEMINI_VIDEO_YUANBAO_COOKIE"):
+        return True
+    cookie_file = _env_value("GEMINI_VIDEO_YUANBAO_COOKIE_FILE")
+    if cookie_file:
+        path = Path(cookie_file).expanduser()
+        if path.is_absolute() and path.is_file():
+            try:
+                return bool(path.read_text(encoding="utf-8").strip())
+            except OSError:
+                return False
+    return bool(load_saved_yuanbao_cookie())
     try:
         with socket.create_connection((parsed.hostname, parsed.port or 80), timeout=0.3):
             return True
@@ -118,9 +134,12 @@ def run_checks():
     results.append(("AI Douyin key(可选短视频平台降级)", ai_douyin_ok,
                     "仅需代理降级时配置 AI_DOUYIN_API_KEY;未配置不影响 yt-dlp 主路"))
 
-    wechat_ok = _wechat_api_ready()
-    results.append(("wx_channels_download(微信视频号解析/解密)", wechat_ok,
-                    "安装并初始化 wx_channels_download,确认本机 API http://127.0.0.1:2022 可用"))
+    wechat_background_ok = _yuanbao_cookie_ready()
+    wechat_local_ok = _wechat_api_ready()
+    wechat_ok = wechat_background_ok or wechat_local_ok
+    results.append(("微信视频号后台授权/本地兜底", wechat_ok,
+                    "推荐运行 python scripts/wechat_auth.py 一次性保存元宝 Cookie;"
+                    "不会自动打开微信或修改系统代理。本地 API 仅作已就绪的可选兜底"))
 
     return results, fail_code, (ffmpeg_ok and ffprobe_ok), ytdlp_ok, wechat_ok
 
@@ -139,7 +158,7 @@ def main():
     ap.add_argument("--require-url-download", action="store_true",
                     help="把 yt-dlp 算作硬依赖(分析 B站/小红书/抖音等 URL 时使用)")
     ap.add_argument("--require-wechat", action="store_true",
-                    help="要求微信视频号本地下载/解密服务已启动")
+                    help="要求微信视频号后台 Cookie 或已就绪的本地服务至少一种可用")
     args = ap.parse_args()
 
     results, fail_code, ffmpeg_ready, ytdlp_ready, wechat_ready = run_checks()
@@ -162,7 +181,7 @@ def main():
             if args.require_url_download:
                 required_names.add("yt-dlp(非 YouTube 链接下载)")
             if args.require_wechat:
-                required_names.add("wx_channels_download(微信视频号解析/解密)")
+                required_names.add("微信视频号后台授权/本地兜底")
             missing = [name for name, ok, _ in results if not ok and name in required_names]
             print(f"FAIL: 缺少 {', '.join(missing)}", file=sys.stderr)
         sys.exit(fail_code)

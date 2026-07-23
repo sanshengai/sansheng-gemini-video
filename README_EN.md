@@ -11,8 +11,9 @@ Claude can't watch video; it can only guess from a few sampled frames. This skil
 what happens, whether footage passes a rubric, or a breakdown of a creator's visual & audio craft.
 
 It's a **perception layer with source resolution**: Gemini reads public YouTube URLs directly;
-Bilibili, Xiaohongshu, Douyin, and similar links are downloaded when needed; WeChat Channels can
-hand off to a local download/decryption service. It doesn't edit or publish video.
+Bilibili, Xiaohongshu, Douyin, and similar links are downloaded when needed; after one explicit
+Yuanbao Web authorization, WeChat Channels links are resolved and downloaded in the background.
+It doesn't edit or publish video.
 
 ## What the output looks like -- see it before you install
 
@@ -121,10 +122,15 @@ cp .env.example .env            # then set your key (see below)
 python scripts/setup_check.py   # environment / key health check
 python scripts/analyze_video.py "C:\path\to\clip.mp4"
 python scripts/analyze_video.py "https://www.bilibili.com/video/BV..."
+# One-time WeChat Channels authorization; later runs stay headless:
+python scripts/wechat_auth.py
+python scripts/analyze_video.py "https://weixin.qq.com/sph/..."
 ```
 
 See [`references/url-sources.md`](references/url-sources.md) for URL routing, cookie safeguards,
-and the local WeChat Channels service contract. Downloads are temporary by default; use
+and the WeChat Channels background resolver/fallback contract. The default Windows credential is
+encrypted with current-user DPAPI outside the repository; the skill does not open WeChat/a browser
+or change the system proxy. Downloads are temporary by default; use
 `--download-dir` or `--keep-download` to retain them.
 
 ## Which key do I need?
@@ -164,13 +170,14 @@ The dependency health-check (`setup_check.py`, silent `--check` with graded exit
 modeled on **[bradautomates/claude-video](https://github.com/bradautomates/claude-video)** (MIT).
 The short-video resolver fallback follows the MIT design in
 **[imlewc/video-to-subtitle-summary-skill](https://github.com/imlewc/video-to-subtitle-summary-skill)**.
-WeChat Channels hands off through the local HTTP API of
-**[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** without copying its source.
+The WeChat Channels background resolver follows the public SPH protocol documented by
+**[ltaoo/wx_channels_download](https://github.com/ltaoo/wx_channels_download)** v260531 without
+bundling its source or binaries; its local HTTP API remains an opt-in fallback only.
 
 This skill has one required third-party runtime dependency, `requests` (raw REST against Gemini,
 no bundled SDK); `ffmpeg` is optional and `yt-dlp` is the primary downloader for non-YouTube URLs.
-The WeChat upstream must be installed and initialized separately. Each project keeps its own
-license; this repo bundles none of their source code.
+The default WeChat path does not require a desktop downloader. Each project keeps its own license;
+this repo bundles none of their source code.
 
 ## Article
 
