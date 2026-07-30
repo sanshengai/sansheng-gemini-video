@@ -89,14 +89,14 @@ Channels URL and ask what's in it -- Claude picks up this skill and runs `analyz
 As a Claude Code plugin (recommended):
 
 ```bash
-claude plugin marketplace add sandypoli-boop/sansheng-gemini-video
+claude plugin marketplace add sanshengai/sansheng-gemini-video
 claude plugin install sansheng-gemini-video
 ```
 
 Or manually: clone and symlink into `~/.claude/skills/`:
 
 ```bash
-git clone https://github.com/sandypoli-boop/sansheng-gemini-video.git
+git clone https://github.com/sanshengai/sansheng-gemini-video.git
 ln -s "$PWD/sansheng-gemini-video" ~/.claude/skills/sansheng-gemini-video
 ```
 

@@ -4,6 +4,10 @@
 
 ## [未发布]
 
+### 修复
+
+- 安装命令、插件元数据与历史版本链接已统一到当前公开仓地址，避免继续跳转到失效地址。
+
 ## [0.3.0] -- 2026-07-22
 
 **微信视频号改为无界面后台主链：**
@@ -43,5 +47,5 @@
 
 字段契约、装法与 setup 自检见 README。这是叁笙做视频工作流时磨出来、清洗脱敏后开源的 Claude Code 技能。
 
-[0.1.1]: https://github.com/sandypoli-boop/sansheng-gemini-video/releases/tag/v0.1.1
-[0.1.0]: https://github.com/sandypoli-boop/sansheng-gemini-video/releases/tag/v0.1.0
+[0.1.1]: https://github.com/sanshengai/sansheng-gemini-video/tree/v0.1.1
+[0.1.0]: https://github.com/sanshengai/sansheng-gemini-video/tree/v0.1.0

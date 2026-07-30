@@ -76,14 +76,14 @@ Claude 本身看不了视频,只能从抽出来的几帧里猜。这个 skill �
 作为 Claude Code plugin(推荐):
 
 ```bash
-claude plugin marketplace add sandypoli-boop/sansheng-gemini-video
+claude plugin marketplace add sanshengai/sansheng-gemini-video
 claude plugin install sansheng-gemini-video
 ```
 
 或手动:clone 后软链进 `~/.claude/skills/`:
 
 ```bash
-git clone https://github.com/sandypoli-boop/sansheng-gemini-video.git
+git clone https://github.com/sanshengai/sansheng-gemini-video.git
 ln -s "$PWD/sansheng-gemini-video" ~/.claude/skills/sansheng-gemini-video
 ```
 
@@ -95,7 +95,7 @@ GitHub 直连不畅时，给 clone 地址前面加一层公共镜像即可（下
 
 ```bash
 # 加速 clone（把 gh-proxy.com 换成 ghfast.top 即备用镜像）
-git clone https://gh-proxy.com/https://github.com/sandypoli-boop/sansheng-gemini-video.git
+git clone https://gh-proxy.com/https://github.com/sanshengai/sansheng-gemini-video.git
 ```
 
 插件市场方式暂无稳定国内镜像；网络不畅时用上面的加速 clone + 软链。
