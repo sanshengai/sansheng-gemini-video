@@ -175,6 +175,10 @@ python scripts/analyze_video.py "https://weixin.qq.com/sph/..."
   <br><sub>微信扫码关注 · 叁笙早安AI</sub>
 </p>
 
+---
+
+**用着顺手的话，点个 ⭐ 吧** —— 这是我判断「要不要继续做下去」最直接的信号。
+
 ## License
 
 [MIT](LICENSE) © 2026 叁笙 (sansheng)
